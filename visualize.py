@@ -1,99 +1,86 @@
 import numpy as np
-import warnings
+import time
 import matplotlib.pyplot as plt
-
-from optimize import calc_BR
-
+TOL = 1e-12
 '''
-Visual version of optimize.py.
-
-Instead of printing the max Braess ratios (BR), this sweeps all grids
-(m x n) with 1 <= m <= n <= M, stores every BR, and draws:
-  1. a heatmap of BR over the (m, n) plane (lower triangle is unused),
-  2. the best-over-n BR curve as a function of m,
-with the global maximum marked on both.
+constructs eigenpair of path Laplacian on N vertices L_N
 '''
+def path_eig(N):
+    a = np.arange(N)
+    lam = 4.0 * np.sin(np.pi * a / (2 * N)) ** 2 # eigenvalues
+    i = np.arange(N)[:, None]
+    psi = np.cos(np.pi * a[None, :] * (i + 0.5) / N) # eigenvector
+    return psi * np.sqrt(np.where(a == 0, 1.0 / N, 2.0 / N)), lam
+'''
+Compute the fraction of chords (non-edge vertex pairs) of an (m x n) grid graph
+that exhibit Braess' paradox. A chord {u,v} is Braess-exhibiting iff the s-t
+voltage drop satisfies V_uv < 0 with level gain k = csum[v] - csum[u] > 0.
+Only the voltage vector phi = Lp[:,s] - Lp[:,t] is needed, so instead of forming
+the full V x V pseudoinverse we contract the closed form to two columns:
+    phi[i,j] = sum_{a,b} psi[i,a] xi[j,b] * G[a,b] * (psi[0,a]xi[0,b] - psi[m,a]xi[n,b])
+Returns (fraction, braess_count, total_chords).
+'''
+def calc_BR(m, n, block=512):
+    V = (m + 1) * (n + 1)
+    rows, cols = np.divmod(np.arange(V), n + 1)
+    csum = rows + cols
+    psi, lam = path_eig(m + 1) # x axis eigenpairs
+    xi,  mu  = path_eig(n + 1) # y axis eigenpairs
+    eigenvalues = lam[:, None] + mu[None, :]; eigenvalues[0, 0] = 1.0
+    G = 1.0 / eigenvalues; G[0, 0] = 0.0 # 1/eigenvalue, with constant mode -> 0
+    # voltage at every vertex for unit current s=(0,0) -> t=(m,n), without building Lp
+    w = G * (np.outer(psi[0], xi[0]) - np.outer(psi[m], xi[n]))  # [a,b]
+    phi = (psi @ w @ xi.T).reshape(V)                            # phi[u] = Lp[u,s]-Lp[u,t]
 
+    # total number of chords = all unordered vertex pairs minus existing grid edges
+    edges = n * (m + 1) + m * (n + 1)          # horizontal + vertical grid edges
+    total_chords = V * (V - 1) // 2 - edges
 
-def compute_BR(M=40, verbose=True):
-    '''Run calc_BR over all grids 1 <= m <= n <= M.
+    braess = 0
+    # process `block` rows at a time to utilize cache
+    for u0 in range(0, V, block):
+        u1 = min(u0 + block, V)
+        Volt = phi[u0:u1, None] - phi[None, :]     # voltage drops V_uv (q>0 is sign-irrelevant)
+        kblk = csum[None, :] - csum[u0:u1, None]   # level gains k
+        braess += int(((Volt < -TOL) & (kblk > 0)).sum())
 
-    Returns (BR, best) where BR[m-1, n-1] is the max ratio for that grid
-    (NaN if Braess is impossible or n < m) and best is the global winner
-    (ratio, (m, n), u, v, k).
-    '''
-    BR = np.full((M, M), np.nan)  # BR[m-1, n-1]
-    best = (1.0, None, None, None, None)
+    fraction = braess / total_chords if total_chords else 0.0
+    return fraction, braess, total_chords
+'''
+Search all grids (m x n) with 1 <= m <= n <= M, fill the fraction matrix
+(mirrored across the diagonal since (m,n) and (n,m) are transposes with equal
+fractions), and render it as a heatmap.
+'''
+def find_max(M=40, verbose=True, savepath="braess_heatmap.png"):
+    H = np.full((M, M), np.nan)  # H[m-1, n-1] = Braess-chord fraction
+    t0 = time.time()
     for m in range(1, M + 1):
         for n in range(m, M + 1):
-            x = calc_BR(m, n)
-            if x is None:
-                continue
-            ratio, u, v, k = x
-            BR[m - 1, n - 1] = ratio
-            if ratio > best[0]:
-                best = (ratio, (m, n), u, v, k)
+            frac, count, total = calc_BR(m, n)
+            H[m - 1, n - 1] = frac
+            H[n - 1, m - 1] = frac  # transpose symmetry
         if verbose:
-            print(f"  m={m:3d} done", flush=True)
-    return BR, best
+            print(f"(elapsed {time.time() - t0:5.0f}s, finished m={m})", flush=True)
 
-
-def _highlight(ax, x, y, label=None):
-    '''Mark a point with a clean solid dot.'''
-    ax.scatter([x], [y], s=55, color="crimson", edgecolors="white",
-               linewidths=1.0, zorder=5, label=label)
-
-
-def plot_BR(BR, best, savepath="braess_ratios.png"):
-    '''Draw the BR heatmap and the best-over-n curve, side by side.'''
-    M = BR.shape[0]
-    ratio, (gm, gn), u, v, k = best
-    # BR is symmetric (an m x n grid equals an n x m grid); mirror the
-    # computed upper triangle into the full plane for a contour plot.
-    full = np.fmax(BR, BR.T)
-    with warnings.catch_warnings():  # rows with no Braess are all-NaN
-        warnings.simplefilter("ignore", RuntimeWarning)
-        best_per_m = np.nanmax(BR, axis=1)  # best over n >= m, as in find_max
-
-    fig, (ax_map, ax_curve) = plt.subplots(1, 2, figsize=(13, 5.5))
-
-    # --- filled contour of BR over the (m, n) plane ---
-    axis = np.arange(1, M + 1)
-    levels = np.linspace(1.0, np.nanmax(full), 21)
-    cf = ax_map.contourf(axis, axis, full, levels=levels,
-                         cmap="viridis", extend="min")
-    ax_map.contour(axis, axis, full, levels=levels,
-                   colors="white", linewidths=0.5, alpha=0.6)
-    fig.colorbar(cf, ax=ax_map, label="max Braess ratio")
-    _highlight(ax_map, gn, gm, label="global max")
-    _highlight(ax_map, gm, gn)  # symmetric twin
-    ax_map.set_xlabel("n")
-    ax_map.set_ylabel("m")
-    ax_map.set_title("Max Braess ratio over grid shape (linear contour)")
-    ax_map.legend(loc="upper right")
-
-    # --- best-over-n BR as a function of m ---
-    ms = np.arange(1, M + 1)
-    ax_curve.plot(ms, best_per_m, marker="o", ms=3, lw=1.2)
-    _highlight(ax_curve, gm, ratio)
-    ax_curve.annotate(
-        f"global max {ratio:.6f}\n{gm}x{gn}, edge {u}->{v}, k={k}",
-        xy=(gm, ratio), xytext=(34, 4), textcoords="offset points",
-        ha="left", va="top", fontsize=9,
+    # ---- heatmap ----
+    fig, ax = plt.subplots(figsize=(8, 6.5))
+    im = ax.imshow(
+        H,
+        origin="lower",
+        extent=[0.5, M + 0.5, 0.5, M + 0.5],  # so ticks land on integer m,n
+        aspect="equal",
+        cmap="viridis",
+        interpolation="nearest",
     )
-    ax_curve.set_xlabel("m")
-    ax_curve.set_ylabel("max Braess ratio over n >= m")
-    ax_curve.set_title("Best Braess ratio for each m")
-    ax_curve.grid(True, alpha=0.3)
-
+    cbar = fig.colorbar(im, ax=ax)
+    cbar.set_label("fraction of chords exhibiting Braess' paradox")
+    ax.set_xlabel("n")
+    ax.set_ylabel("m")
+    ax.set_title(f"Braess-chord fraction on (m × n) grid graphs, 1 ≤ m, n ≤ {M}")
     fig.tight_layout()
     fig.savefig(savepath, dpi=150)
-    print(f"\nGlobal Max Braess ratio = {ratio:.10f}")
-    print(f"  grid  {gm} x {gn}  edge {u} -> {v}   level gain k = {k}")
-    print(f"  figure saved to {savepath}")
     plt.show()
-
-
+    print(f"\nHeatmap written to {savepath}")
+    return H
 if __name__ == "__main__":
-    BR, best = compute_BR(M=100)  # search all grids to M x M
-    plot_BR(BR, best)
+    find_max(M=100) # search all grids to M x M
