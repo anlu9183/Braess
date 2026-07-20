@@ -1,4 +1,4 @@
-Tests maximum Braess Ratio in uniform affine latency rectangular grids. 
+Computes the proportion of chords that may induce Braess' Paradox in uniform affine latency rectangular grids. 
 
-'optimize.py' prints max BRs for all with respect to m given 100 >= n >= m.
-'visualize.py' plots results using a contour and line graph.
+'optimize.py' prints max proportions with respect to m given 100 >= n >= m.
+'visualize.py' plots proportions over all 100 >= n,m >= 1. 
