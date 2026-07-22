@@ -12,7 +12,7 @@ def path_eig(N):
     return psi * np.sqrt(np.where(a == 0, 1.0 / N, 2.0 / N)), lam
 '''
 Compute the fraction of chords u->v (non-edge vertex pairs) of an (m x n) grid graph
-that are capable of Braess' paradox. A chord {u,v} is Braess-exhibiting iff the s-t
+that are capable of Braess' paradox. A chord u->v is Braess-exhibiting iff the s-t
 voltage drop satisfies V_uv < 0 with level gain k = csum[v] - csum[u] > 0.
 Only the voltage vector phi = Lp[:,s] - Lp[:,t] is needed, so instead of forming
 the full V x V pseudoinverse we contract the closed form to two columns:
