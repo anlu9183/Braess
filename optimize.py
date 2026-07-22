@@ -11,8 +11,8 @@ def path_eig(N):
     psi = np.cos(np.pi * a[None, :] * (i + 0.5) / N) # eigenvector
     return psi * np.sqrt(np.where(a == 0, 1.0 / N, 2.0 / N)), lam
 '''
-Compute the fraction of chords (non-edge vertex pairs) of an (m x n) grid graph
-that exhibit Braess' paradox. A chord {u,v} is Braess-exhibiting iff the s-t
+Compute the fraction of chords u->v (non-edge vertex pairs) of an (m x n) grid graph
+that are capable of Braess' paradox. A chord {u,v} is Braess-exhibiting iff the s-t
 voltage drop satisfies V_uv < 0 with level gain k = csum[v] - csum[u] > 0.
 Only the voltage vector phi = Lp[:,s] - Lp[:,t] is needed, so instead of forming
 the full V x V pseudoinverse we contract the closed form to two columns:
@@ -31,9 +31,9 @@ def calc_BR(m, n, block=512):
     w = G * (np.outer(psi[0], xi[0]) - np.outer(psi[m], xi[n]))  # [a,b]
     phi = (psi @ w @ xi.T).reshape(V)                            # phi[u] = Lp[u,s]-Lp[u,t]
 
-    # total number of chords = all unordered vertex pairs minus existing grid edges
+    # total number of directed chords = all ordered vertex pairs minus existing grid adjacencies
     edges = n * (m + 1) + m * (n + 1)          # horizontal + vertical grid edges
-    total_chords = V * (V - 1) // 2 - edges
+    total_chords = V * (V - 1) - 2 * edges
 
     braess = 0
     # process `block` rows at a time to utilize cache
@@ -73,7 +73,7 @@ def find_max(M=40, verbose=True):
     print("\n" + "=" * 60)
     frac, (m, n), count, total = best
     print(f"Max Braess-capable fraction = {frac:.10f}")
-    print(f"  grid  {m} x {n}:  {count} of {total} chords exhibit Braess' paradox")
+    print(f"  grid  {m} x {n}:  {count} of {total} chords capable of Braess' paradox")
     return None
 if __name__ == "__main__":
     find_max(M=100) # search all grids to M x M
